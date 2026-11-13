@@ -26,6 +26,11 @@ const FILE_ID = { type: "object", properties: { videoId: { type: "string", patte
 
 const app = Fastify({ logger: { level: "info" }, trustProxy: true });
 
+// The logout button is a plain HTML form: browsers post it as urlencoded, with an empty body.
+app.addContentTypeParser("application/x-www-form-urlencoded", { parseAs: "string" }, (_req, body, done) => {
+  done(null, body);
+});
+
 function cookie(req: FastifyRequest, name: string) {
   const header = req.headers.cookie;
   if (!header) return undefined;
