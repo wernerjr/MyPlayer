@@ -1,0 +1,100 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Instrument Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
+
+  --color-page: #161513;
+  --color-deep: #12110f;
+  --color-card: #1c1a18;
+  --color-raised: #262421;
+  --color-line: rgba(239, 233, 222, 0.08);
+  --color-ink: #efe9de;
+  --color-ink-2: #aaa398;
+  --color-ink-3: #948d82;
+  --color-amber: #e0a552;
+  --color-danger: #e5847a;
+
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--color-page);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-amber);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: rgba(224, 165, 82, 0.25);
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #38342e transparent;
+  }
+
+  video {
+    accent-color: var(--color-amber);
+    background: #000;
+  }
+}
+
+@keyframes drawer-in {
+  from {
+    transform: translateX(-16px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes sheet-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+dialog[open] {
+  animation: sheet-in 180ms var(--ease-out) both;
+}
+
+dialog::backdrop {
+  background: rgba(0, 0, 0, 0.7);
+  animation: fade-in 180ms var(--ease-out) both;
+}
+
+.drawer-in {
+  animation: drawer-in 220ms var(--ease-out) both;
+}
+
+.fade-in {
+  animation: fade-in 180ms var(--ease-out) both;
+}
