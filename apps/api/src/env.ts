@@ -17,9 +17,12 @@ export const env = {
   apiUrl: process.env.API_URL ?? `http://localhost:${port}`,
   clientId: process.env.GOOGLE_CLIENT_ID ?? "",
   clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
+  microsoftClientId: process.env.MICROSOFT_CLIENT_ID ?? "",
+  microsoftClientSecret: process.env.MICROSOFT_CLIENT_SECRET ?? "",
   dataDir: resolve(process.env.DATA_DIR ?? "data"),
   mock: process.env.MOCK === "1",
   secureCookies: appUrl.startsWith("https://"),
 };
 
 export const oauthReady = Boolean(env.clientId && env.clientSecret);
+export const oneDriveReady = Boolean(env.microsoftClientId && env.microsoftClientSecret);

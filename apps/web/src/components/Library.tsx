@@ -92,8 +92,8 @@ export function Library({ catalog, progress, loading, onOpenCourse, onSelectCour
         <div className="mx-auto mt-10 max-w-[560px] rounded-[16px] border border-dashed border-line px-6 py-14 text-center">
           <p className="text-[14px] text-ink-2">Nenhum curso selecionado</p>
           <p className="mx-auto mt-2 max-w-[48ch] text-[13px] leading-5 text-ink-3">
-            Marque as pastas do Drive que são cursos. As subpastas de cada uma viram módulos e os vídeos entram na
-            ordem dos arquivos.
+            Marque as pastas do Drive ou do OneDrive que são cursos. As subpastas de cada uma viram módulos e os
+            vídeos entram na ordem dos arquivos.
           </p>
           <Button variant="primary" className="mt-5" onClick={onSelectCourses}>
             Escolher pastas

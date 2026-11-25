@@ -1,5 +1,5 @@
-import type { Catalog, Course, Module, ProgressMap, Video } from "@myplayer/shared";
-import type { FolderRef } from "./catalog.js";
+import type { Catalog, CloudFolder, CloudProvider, Course, Module, ProgressMap, Video } from "@myplayer/shared";
+import { parseRef, refKey } from "./catalog.js";
 import { db, save } from "./store.js";
 
 /** Public sample clip used by mock mode so the player can be exercised without Drive. */
@@ -24,8 +24,8 @@ const mod = (id: string, name: string, videos: Video[], attachments: Module["att
 
 const course = (id: string, name: string, modules: Module[]): Course => ({ id, name, modules });
 
-/** Everything the fake Drive knows about. Selection decides which of these become courses. */
-export const mockCourses: Course[] = [
+/** Everything the fake clouds know about. Selection decides which of these become courses. */
+const rawCourses: Course[] = [
   course("mock-c1", "Arquitetura de software na prática", [
     mod(
       "mock-m1",
@@ -89,25 +89,58 @@ export const mockCourses: Course[] = [
   ]),
 ];
 
-const folder = ({ id, name }: Course): FolderRef => ({ id, name });
-
-const foldersOf: Record<string, FolderRef[]> = {
-  root: mockCourses.map(folder),
+const providerOf: Record<string, CloudProvider> = {
+  "mock-c1": "gdrive",
+  "mock-c2": "gdrive",
+  "mock-c3": "gdrive",
+  "mock-c4": "onedrive",
+  "mock-c5": "onedrive",
 };
-for (const item of mockCourses) foldersOf[item.id] = item.modules.map(({ id, name }) => ({ id, name }));
 
-export function mockFolders(parent: string): FolderRef[] {
-  return foldersOf[parent] ?? [];
+/** The demo shows both clouds: three Google Drive courses and two OneDrive courses. */
+export const mockCourses: Course[] = rawCourses.map((course) => {
+  const provider = providerOf[course.id] ?? "gdrive";
+  return {
+    ...course,
+    id: refKey(provider, course.id),
+    provider,
+    webViewLink:
+      provider === "onedrive" ? "https://onedrive.live.com" : `https://drive.google.com/drive/folders/${course.id}`,
+    modules: course.modules.map((mod) => ({
+      ...mod,
+      videos: mod.videos.map((video) => ({ ...video, provider })),
+      attachments: mod.attachments.map((attachment) => ({ ...attachment, provider })),
+    })),
+  };
+});
+
+const coursesOf: Record<CloudProvider, Course[]> = {
+  gdrive: rawCourses.filter((course) => providerOf[course.id] === "gdrive"),
+  onedrive: rawCourses.filter((course) => providerOf[course.id] === "onedrive"),
+};
+
+export function mockFolders(provider: CloudProvider, parent: string): CloudFolder[] {
+  if (parent === "root") return coursesOf[provider].map(({ id, name }) => ({ provider, id, name }));
+  const course = coursesOf[provider].find((item) => item.id === parent);
+  return (course?.modules ?? []).map(({ id, name }) => ({ provider, id, name }));
 }
 
-export function mockResolve(ids: string[]): FolderRef[] {
-  return ids
-    .map((id) => foldersOf.root.find((item) => item.id === id))
-    .filter((item): item is FolderRef => item !== undefined);
+export function mockResolve(refs: string[]): CloudFolder[] {
+  return refs.flatMap((ref) => {
+    const { provider, id } = parseRef(ref);
+    const course = coursesOf[provider].find((item) => item.id === id);
+    return course ? [{ provider, id: course.id, name: course.name }] : [];
+  });
 }
 
 export function mockCatalog(selected: string[]): Catalog {
-  return { courses: mockCourses.filter((item) => selected.includes(item.id)) };
+  const keys = new Set(
+    selected.map((ref) => {
+      const { provider, id } = parseRef(ref);
+      return refKey(provider, id);
+    }),
+  );
+  return { courses: mockCourses.filter((course) => keys.has(course.id)) };
 }
 
 /** A few rows so the demo shows resume and watched states instead of an empty library. */

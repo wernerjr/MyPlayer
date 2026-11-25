@@ -1,5 +1,20 @@
 /** Types and rules shared by the API and the web app. */
 
+export type CloudProvider = "gdrive" | "onedrive";
+
+/** Selection key for a folder: `provider:id`. */
+export function cloudKey(provider: CloudProvider, id: string) {
+  return `${provider}:${id}`;
+}
+
+/** A folder in one of the connected clouds. `id` is the provider's own id. */
+export interface CloudFolder {
+  provider: CloudProvider;
+  id: string;
+  name: string;
+  webViewLink?: string;
+}
+
 export interface Video {
   kind: "video";
   id: string;
@@ -7,7 +22,8 @@ export interface Video {
   mimeType: string;
   size?: number;
   webViewLink?: string;
-  /** From Drive's videoMediaMetadata, so the list can show durations before playback. */
+  provider?: CloudProvider;
+  /** From the provider's metadata, so the list can show durations before playback. */
   durationMs?: number;
 }
 
@@ -18,6 +34,7 @@ export interface Attachment {
   mimeType: string;
   size?: number;
   webViewLink?: string;
+  provider?: CloudProvider;
 }
 
 export interface Module {
@@ -28,8 +45,11 @@ export interface Module {
 }
 
 export interface Course {
+  /** Composite key: `provider:folderId`. */
   id: string;
   name: string;
+  provider?: CloudProvider;
+  webViewLink?: string;
   modules: Module[];
 }
 
@@ -57,6 +77,10 @@ export interface Me {
   email: string;
   name: string;
   picture?: string;
+  /** OneDrive is linked to this account. */
+  onedrive?: boolean;
+  /** Microsoft credentials are configured on the server. */
+  onedriveReady?: boolean;
 }
 
 /** Fraction of a video that counts as watched. */

@@ -1,4 +1,4 @@
-import { mergeProgress, type Catalog, type Module, type ProgressInput, type ProgressMap } from "@myplayer/shared";
+import { mergeProgress, type Catalog, type CloudProvider, type Module, type ProgressInput, type ProgressMap } from "@myplayer/shared";
 import { ChevronLeft, ExternalLink, Menu } from "lucide-react";
 import type { Course, Me, Video } from "@myplayer/shared";
 import { useCallback, useEffect, useState } from "react";
@@ -13,13 +13,14 @@ import { Button, buttonClass, Spinner } from "./ui";
 export function AppShell({ me }: { me: Me }) {
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [progress, setProgress] = useState<ProgressMap>({});
-  const [error, setError] = useState<null | "scope" | "drive">(null);
+  const [error, setError] = useState<null | "scope" | "drive" | "onedrive" | "onedrive_connect">(null);
   const [loading, setLoading] = useState(true);
   const [courseId, setCourseId] = useState<string | null>(null);
   const [videoId, setVideoId] = useState<string | null>(null);
   const [openModules, setOpenModules] = useState<string[]>([]);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerProvider, setPickerProvider] = useState<CloudProvider>("gdrive");
 
   const loadCatalog = useCallback((refresh = false) => {
     setLoading(true);
@@ -28,6 +29,8 @@ export function AppShell({ me }: { me: Me }) {
       .then(setCatalog)
       .catch((cause) => {
         if (cause instanceof HttpError && cause.status === 401) location.assign("/auth/google");
+        else if (cause instanceof HttpError && cause.status === 403 && cause.message.includes("onedrive_reauth"))
+          setError("onedrive");
         else if (cause instanceof HttpError && cause.status === 403) setError("scope");
         else setError("drive");
       })
@@ -42,6 +45,20 @@ export function AppShell({ me }: { me: Me }) {
         if (cause instanceof HttpError && cause.status === 401) location.assign("/auth/google");
       });
   }, [loadCatalog]);
+
+  useEffect(() => {
+    // Coming back from the OneDrive consent, reopen the picker or explain the failure.
+    const params = new URLSearchParams(location.search);
+    const status = params.get("onedrive");
+    if (status !== "connected" && status !== "error") return;
+    if (status === "connected") {
+      setPickerProvider("onedrive");
+      setPickerOpen(true);
+    } else {
+      setError("onedrive_connect");
+    }
+    history.replaceState(null, "", location.pathname);
+  }, []);
 
   useEffect(() => {
     if (!mobileOpen) return;
@@ -200,13 +217,13 @@ export function AppShell({ me }: { me: Me }) {
                 {stats.watched}/{stats.total} aulas
               </span>
             ) : null}
-            {course ? (
+            {course?.webViewLink ? (
               <a
-                href={`https://drive.google.com/drive/folders/${course.id}`}
+                href={course.webViewLink}
                 target="_blank"
                 rel="noreferrer"
-                title="Abrir pasta do curso no Drive"
-                aria-label="Abrir pasta do curso no Drive"
+                title={`Abrir pasta do curso no ${course.provider === "onedrive" ? "OneDrive" : "Drive"}`}
+                aria-label={`Abrir pasta do curso no ${course.provider === "onedrive" ? "OneDrive" : "Drive"}`}
                 className="grid size-8 place-items-center rounded-[8px] text-ink-3 transition-colors duration-150 hover:bg-raised hover:text-ink"
               >
                 <ExternalLink size={15} strokeWidth={1.5} />
@@ -221,7 +238,11 @@ export function AppShell({ me }: { me: Me }) {
               <p className="text-[14px] text-ink-2">
                 {error === "scope"
                   ? "A conta entrou sem permissão de leitura do Drive"
-                  : "Não foi possível ler a pasta do Drive"}
+                  : error === "onedrive"
+                    ? "O OneDrive precisa ser reconectado"
+                    : error === "onedrive_connect"
+                      ? "Não foi possível conectar o OneDrive"
+                      : "Não foi possível ler as pastas da nuvem"}
               </p>
               {error === "scope" ? (
                 <>
@@ -232,6 +253,31 @@ export function AppShell({ me }: { me: Me }) {
                   <a href="/auth/google" className={buttonClass("primary", "md", "mt-5")}>
                     Entrar de novo
                   </a>
+                </>
+              ) : error === "onedrive_connect" ? (
+                <>
+                  <p className="mt-2 text-[13px] leading-5 text-ink-3">
+                    Confira a URI de redirecionamento e a permissão delegada Files.Read.All no Microsoft Entra e tente
+                    de novo.
+                  </p>
+                  {me.onedriveReady ? (
+                    <a href="/auth/microsoft" className={buttonClass("primary", "md", "mt-5")}>
+                      Tentar de novo
+                    </a>
+                  ) : null}
+                </>
+              ) : error === "onedrive" ? (
+                <>
+                  <p className="mt-2 text-[13px] leading-5 text-ink-3">
+                    {me.onedriveReady
+                      ? "A conexão com a conta Microsoft expirou ou foi revogada. Reconecte para voltar a ler as pastas."
+                      : "O OneDrive não está configurado no servidor. Preencha MICROSOFT_CLIENT_ID e MICROSOFT_CLIENT_SECRET no .env."}
+                  </p>
+                  {me.onedriveReady ? (
+                    <a href="/auth/microsoft" className={buttonClass("primary", "md", "mt-5")}>
+                      Reconectar OneDrive
+                    </a>
+                  ) : null}
                 </>
               ) : (
                 <>
@@ -273,6 +319,8 @@ export function AppShell({ me }: { me: Me }) {
 
       {pickerOpen ? (
         <CoursePicker
+          me={me}
+          initialProvider={pickerProvider}
           onClose={() => setPickerOpen(false)}
           onSaved={() => loadCatalog(true)}
         />

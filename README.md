@@ -1,15 +1,17 @@
 # MyPlayer
 
-Player de cursos em vídeo que lê as pastas do Google Drive que você marcar como cursos: cada subpasta vira um
-módulo, cada vídeo uma aula na sequência, e o resto vira anexo do módulo. O histórico fica no servidor, com
-retomada do ponto onde parou.
+Player de cursos em vídeo que lê as pastas do Google Drive ou do OneDrive que você marcar como cursos: cada
+subpasta vira um módulo, cada vídeo uma aula na sequência, e o resto vira anexo do módulo. O histórico fica no
+servidor, com retomada do ponto onde parou.
 
 ## Como funciona
 
 - **Login** com Google (OAuth, escopo `drive.readonly`). O refresh token fica no servidor; o navegador só recebe
   um cookie de sessão `HttpOnly`.
-- **Cursos** são as pastas que você escolhe em **Escolher cursos**, navegando pelo seu Drive. A seleção fica salva
-  por conta em `apps/api/data/db.json`.
+- **OneDrive** é conectado depois do login, em **Escolher pastas → OneDrive → Conectar OneDrive** (OAuth da
+  Microsoft, escopo `Files.Read.All`). As duas nuvens ficam ligadas à mesma conta do app.
+- **Cursos** são as pastas que você escolhe em **Escolher pastas**, navegando pelo Drive ou pelo OneDrive. A
+  seleção fica salva por conta em `apps/api/data/db.json`.
 - **Catálogo** montado a partir das pastas escolhidas (cursos → módulos → arquivos) e cacheado por 60 s.
 - **Vídeo** é transmitido por um proxy autenticado (`/api/media/:id`) que repassa `Range`, então seek e retomada
   funcionam com o player nativo do navegador.
@@ -36,14 +38,28 @@ Antes do login funcionar, crie o acesso no Google Cloud:
 4. Copie client ID e secret para `GOOGLE_CLIENT_ID` e `GOOGLE_CLIENT_SECRET` no `.env`.
 5. A conta usada no login precisa ter acesso às pastas que você vai marcar como cursos.
 
-### Ver a interface sem configurar o Google
+Para conectar o OneDrive, crie um app no Microsoft Entra (Azure Portal):
+
+1. **App registrations → New registration**, em *Supported account types* escolha contas pessoais e
+   organizacionais.
+2. Em **Authentication → Add a platform → Web**, cadastre a URI
+   `http://localhost:8788/auth/microsoft/callback`.
+3. Em **Certificates & secrets**, crie um client secret e copie o valor para `MICROSOFT_CLIENT_SECRET`; o
+   *Application (client) ID* vai para `MICROSOFT_CLIENT_ID` no `.env`.
+4. Em **API permissions**, adicione as permissões delegadas do Microsoft Graph `Files.Read.All` e
+   `offline_access`. Contas corporativas podem exigir consentimento do administrador.
+5. Com o app rodando, entre com o Google, abra **Escolher pastas → OneDrive** e clique em **Conectar OneDrive**.
+
+O login continua sendo pelo Google; o OneDrive é uma conexão adicional, somente leitura.
+
+### Ver a interface sem configurar as nuvens
 
 ```bash
 MOCK=1 pnpm dev
 ```
 
-Modo demonstração: Drive fictício (dá para navegar e trocar a seleção), um vídeo de exemplo público e histórico
-local.
+Modo demonstração: duas nuvens fictícias (Drive e OneDrive, com navegação e troca de seleção), um vídeo de
+exemplo público e histórico local. Nesse modo o OneDrive já aparece conectado.
 
 ### Build de produção
 
@@ -53,12 +69,12 @@ APP_URL=https://seu-dominio API_URL=https://seu-dominio DATA_DIR=/caminho/dos/da
 ```
 
 O servidor da API também serve o build da web, então um único processo e uma única origem cuidam de cookie e
-OAuth. Cadastre a URI de redirecionamento correspondente no Google Cloud.
+OAuth. Cadastre as URIs de redirecionamento correspondentes no Google Cloud e no Microsoft Entra.
 
 ## Estrutura da pasta
 
-Na primeira vez, a biblioteca abre vazia. Clique em **Escolher cursos**, navegue pelo Drive e marque as pastas que
-são cursos. Cada pasta marcada vira um curso:
+Na primeira vez, a biblioteca abre vazia. Clique em **Escolher pastas**, escolha a nuvem (Drive ou OneDrive),
+navegue e marque as pastas que são cursos. Cada pasta marcada vira um curso:
 
 ```
 Curso (pasta marcada)
@@ -88,9 +104,9 @@ O app avisa quando o login volta sem o escopo e não cria sessão nesse caso.
 
 - `drive.readonly` é um escopo restrito: em *Testing* funciona só para os usuários de teste e o token expira em
   ~7 dias; publicar o app remove essas duas limitações, mas mantém o aviso de "não verificado".
-- O seletor navega a partir de "Meu Drive" e não tem busca: para muitas pastas, navegue pela hierarquia. Pastas em
-  drives compartilhados não aparecem no seletor.
-- O dono do arquivo precisa permitir download; sem isso o vídeo não abre no player e o app oferece o link do Drive.
+- O seletor navega a partir da raiz de cada nuvem e não tem busca: para muitas pastas, navegue pela hierarquia.
+  Pastas em drives compartilhados e itens compartilhados do OneDrive não aparecem no seletor.
+- O dono do arquivo precisa permitir download; sem isso o vídeo não abre no player e o app oferece o link da nuvem.
 - MKV, AVI e alguns MOV não são reproduzidos pelo navegador; use MP4 (H.264/AAC) ou WebM.
 - O histórico é um JSON único, escrito de forma atômica e com debounce. Serve para uso pessoal ou familiar, não
   para muitas escritas simultâneas. Faça backup de `apps/api/data/db.json`.

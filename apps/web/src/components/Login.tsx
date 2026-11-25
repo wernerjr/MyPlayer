@@ -6,16 +6,18 @@ import { buttonClass } from "./ui";
 interface Config {
   mock: boolean;
   oauthReady: boolean;
+  onedriveReady: boolean;
 }
 
 export function Login() {
   const [config, setConfig] = useState<Config>();
   const [authError, setAuthError] = useState<"scope" | "other" | null>(null);
+  const hasOneDrive = Boolean(config?.onedriveReady || config?.mock);
 
   useEffect(() => {
     api<Config>("/api/config")
       .then(setConfig)
-      .catch(() => setConfig({ mock: false, oauthReady: false }));
+      .catch(() => setConfig({ mock: false, oauthReady: false, onedriveReady: false }));
     const code = new URLSearchParams(location.search).get("auth_error");
     if (code) {
       setAuthError(code === "scope" ? "scope" : "other");
@@ -35,8 +37,8 @@ export function Login() {
                 Seus cursos, na ordem em que você parou
               </h1>
               <p className="mt-5 max-w-[36ch] text-[15px] leading-6 text-ink-2">
-                O MyPlayer lê as pastas do seu Google Drive que você marcar como cursos e monta cada módulo como uma
-                sequência de aulas, com o ponto de retomada salvo.
+                O MyPlayer lê as pastas do seu Google Drive{hasOneDrive ? " e do OneDrive" : ""} que você marcar como
+                cursos e monta cada módulo como uma sequência de aulas, com o ponto de retomada salvo.
               </p>
 
               <div className="mt-8">
@@ -75,7 +77,8 @@ export function Login() {
               ) : null}
 
               <p className="mt-6 max-w-[38ch] text-[12px] leading-5 text-ink-3">
-                Acesso somente leitura ao Drive. As aulas são transmitidas direto da sua pasta, sem cópia.
+                Acesso somente leitura{hasOneDrive ? " ao Drive e ao OneDrive" : " ao Drive"}. As aulas são
+                transmitidas direto da sua pasta, sem cópia.
               </p>
             </div>
           </div>

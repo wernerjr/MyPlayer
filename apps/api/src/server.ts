@@ -3,11 +3,12 @@ import { existsSync } from "node:fs";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import fastifyStatic from "@fastify/static";
-import { mergeProgress, type Me, type ProgressInput } from "@myplayer/shared";
+import { mergeProgress, type CloudProvider, type Me, type ProgressInput } from "@myplayer/shared";
 import Fastify, { type FastifyError, type FastifyReply, type FastifyRequest } from "fastify";
-import { getCatalog, invalidateCatalog, listFolders, MissingScope, resolveFolders } from "./catalog.js";
-import { env, oauthReady } from "./env.js";
-import { accessToken, authUrl, DRIVE_SCOPE, exchangeCode, Reauth, toUser } from "./google.js";
+import { MissingScope, refKey } from "./catalog.js";
+import { getCatalog, invalidateCatalog, listFolders, openMedia, resolveFolders } from "./cloud.js";
+import { env, oneDriveReady, oauthReady } from "./env.js";
+import { authUrl, DRIVE_SCOPE, exchangeCode, Reauth, toUser } from "./google.js";
 import {
   MOCK_CLIP,
   MOCK_EMAIL,
@@ -17,12 +18,21 @@ import {
   seedMockProgress,
   seedMockSelection,
 } from "./mock.js";
+import {
+  authUrl as oneDriveAuthUrl,
+  exchangeCode as exchangeOneDriveCode,
+  OneDriveReauth,
+} from "./onedrive.js";
 import { db, save, type User } from "./store.js";
 
 const SESSION_COOKIE = "mp_sid";
 const STATE_COOKIE = "mp_state";
+const MS_STATE_COOKIE = "mp_ms_state";
 const SESSION_SECONDS = 30 * 86_400;
-const FILE_ID = { type: "object", properties: { videoId: { type: "string", pattern: "^[A-Za-z0-9_-]{6,120}$" } }, required: ["videoId"] } as const;
+const PROVIDERS: CloudProvider[] = ["gdrive", "onedrive"];
+const VIDEO_ID_PATTERN = "^[A-Za-z0-9_!.~-]{6,400}$";
+const FILE_ID = { type: "object", properties: { videoId: { type: "string", pattern: VIDEO_ID_PATTERN } }, required: ["videoId"] } as const;
+const SELECTION = { type: "object", properties: { folderIds: { type: "array", maxItems: 100, items: { type: "string", pattern: "^(?:(?:gdrive|onedrive):)?[A-Za-z0-9_!.~-]{1,400}$" } } }, required: ["folderIds"], additionalProperties: false } as const;
 
 const app = Fastify({ logger: { level: "info" }, trustProxy: true });
 
@@ -84,7 +94,7 @@ function startSession(reply: FastifyReply, user: User) {
 
 // --- auth -----------------------------------------------------------------
 
-app.get("/api/config", () => ({ mock: env.mock, oauthReady }));
+app.get("/api/config", () => ({ mock: env.mock, oauthReady, onedriveReady: oneDriveReady }));
 
 app.get("/api/health", () => ({ ok: true }));
 
@@ -95,6 +105,7 @@ app.get("/auth/google", async (_req, reply) => {
       name: "Demonstração",
       accessToken: "mock",
       expiresAt: Number.MAX_SAFE_INTEGER,
+      onedrive: { accessToken: "mock", expiresAt: Number.MAX_SAFE_INTEGER },
     };
     seedMockProgress();
     seedMockSelection();
@@ -127,11 +138,50 @@ app.get("/auth/google/callback", async (req, reply) => {
     const user = toUser(me, token);
     // Keep a refresh token from an earlier consent when Google omits it.
     user.refreshToken ??= previous?.refreshToken;
+    // The OneDrive link belongs to the app account, not to the Google consent.
+    user.onedrive ??= previous?.onedrive;
     startSession(reply, user);
     return reply.redirect(env.appUrl);
   } catch (error) {
     req.log.error(error, "oauth callback failed");
     return reply.redirect(`${env.appUrl}/?auth_error=1`);
+  }
+});
+
+app.get("/auth/microsoft", async (req, reply) => {
+  const user = await currentUser(req, reply);
+  if (!user) return;
+
+  if (env.mock) {
+    user.onedrive ??= { accessToken: "mock", expiresAt: Number.MAX_SAFE_INTEGER };
+    save();
+    return reply.redirect(`${env.appUrl}/?onedrive=connected`);
+  }
+  if (!oneDriveReady) return reply.code(500).send({ error: "onedrive_not_configured" });
+
+  const state = randomBytes(24).toString("base64url");
+  reply.header("set-cookie", cookieHeader(MS_STATE_COOKIE, state, 600));
+  return reply.redirect(oneDriveAuthUrl(state));
+});
+
+app.get("/auth/microsoft/callback", async (req, reply) => {
+  const user = await currentUser(req, reply);
+  if (!user) return;
+
+  const query = req.query as { code?: string; state?: string; error?: string };
+  const expected = cookie(req, MS_STATE_COOKIE);
+  reply.header("set-cookie", cookieHeader(MS_STATE_COOKIE, "", 0));
+  if (query.error || !query.code || !query.state || query.state !== expected) {
+    return reply.redirect(`${env.appUrl}/?onedrive=error`);
+  }
+
+  try {
+    user.onedrive = await exchangeOneDriveCode(query.code);
+    save();
+    return reply.redirect(`${env.appUrl}/?onedrive=connected`);
+  } catch (error) {
+    req.log.error(error, "OneDrive callback failed");
+    return reply.redirect(`${env.appUrl}/?onedrive=error`);
   }
 });
 
@@ -148,7 +198,13 @@ app.post("/auth/logout", async (req, reply) => {
 app.get("/api/me", async (req, reply) => {
   const user = await currentUser(req, reply);
   if (!user) return;
-  const me: Me = { email: user.email, name: user.name, picture: user.picture };
+  const me: Me = {
+    email: user.email,
+    name: user.name,
+    picture: user.picture,
+    onedrive: Boolean(user.onedrive),
+    onedriveReady: oneDriveReady,
+  };
   return me;
 });
 
@@ -162,8 +218,7 @@ app.get("/api/catalog", async (req, reply) => {
   if (env.mock) return mockCatalog(selected);
 
   const force = (req.query as { refresh?: string }).refresh === "1";
-  const token = await accessToken(user);
-  return getCatalog(token, user.email, selected, force);
+  return getCatalog(user, user.email, selected, force);
 });
 
 // --- course folders -------------------------------------------------------
@@ -172,12 +227,14 @@ app.get("/api/folders", async (req, reply) => {
   const user = await currentUser(req, reply);
   if (!user) return;
 
-  const parent = (req.query as { parent?: string }).parent ?? "root";
-  if (!/^(root|[A-Za-z0-9_-]{6,120})$/.test(parent)) return reply.code(400).send({ error: "bad_parent" });
-  if (env.mock) return { folders: mockFolders(parent) };
+  const query = req.query as { parent?: string; provider?: string };
+  const parent = query.parent ?? "root";
+  if (!/^(root|[A-Za-z0-9_!.~-]{1,400})$/.test(parent)) return reply.code(400).send({ error: "bad_parent" });
+  const provider = PROVIDERS.includes(query.provider as CloudProvider) ? (query.provider as CloudProvider) : "gdrive";
+  if (provider === "onedrive" && !env.mock && !user.onedrive) return reply.code(403).send({ error: "onedrive_not_connected" });
+  if (env.mock) return { folders: mockFolders(provider, parent) };
 
-  const token = await accessToken(user);
-  return { folders: await listFolders(token, parent) };
+  return { folders: await listFolders(user, provider, parent) };
 });
 
 app.get("/api/selection", async (req, reply) => {
@@ -187,37 +244,21 @@ app.get("/api/selection", async (req, reply) => {
   const ids = db.courses[user.email] ?? [];
   if (env.mock) return { folders: mockResolve(ids) };
 
-  const token = await accessToken(user);
-  return { folders: await resolveFolders(token, ids) };
+  return { folders: await resolveFolders(user, ids) };
 });
 
 app.put<{ Body: { folderIds: string[] } }>(
   "/api/selection",
-  {
-    schema: {
-      body: {
-        type: "object",
-        properties: {
-          folderIds: {
-            type: "array",
-            maxItems: 100,
-            items: { type: "string", pattern: "^[A-Za-z0-9_-]{6,120}$" },
-          },
-        },
-        required: ["folderIds"],
-        additionalProperties: false,
-      },
-    },
-  },
+  { schema: { body: SELECTION } },
   async (req, reply) => {
     const user = await currentUser(req, reply);
     if (!user) return;
 
     const ids = [...new Set(req.body.folderIds)];
-    const folders = env.mock ? mockResolve(ids) : await resolveFolders(await accessToken(user), ids);
+    const folders = env.mock ? mockResolve(ids) : await resolveFolders(user, ids);
     if (ids.length > 0 && folders.length === 0) return reply.code(400).send({ error: "folders_unavailable" });
 
-    db.courses[user.email] = folders.map((folder) => folder.id);
+    db.courses[user.email] = folders.map((folder) => refKey(folder.provider, folder.id));
     save();
     invalidateCatalog(user.email);
     return { folders };
@@ -265,7 +306,7 @@ app.post<{ Body: { videoIds: string[]; watched: boolean } }>(
       body: {
         type: "object",
         properties: {
-          videoIds: { type: "array", maxItems: 500, items: { type: "string", pattern: "^[A-Za-z0-9_-]{6,120}$" } },
+          videoIds: { type: "array", maxItems: 500, items: { type: "string", pattern: VIDEO_ID_PATTERN } },
           watched: { type: "boolean" },
         },
         required: ["videoIds", "watched"],
@@ -293,15 +334,12 @@ app.get<{ Params: { videoId: string } }>(
     if (!user) return;
     if (env.mock) return reply.redirect(MOCK_CLIP);
 
-    const token = await accessToken(user);
-    const range = req.headers.range;
-    const upstream = await fetch(
-      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(req.params.videoId)}?alt=media&supportsAllDrives=true`,
-      { headers: { authorization: `Bearer ${token}`, ...(range ? { range } : {}) } },
-    );
+    const query = req.query as { provider?: string };
+    const provider = PROVIDERS.includes(query.provider as CloudProvider) ? (query.provider as CloudProvider) : "gdrive";
+    const upstream = await openMedia(user, provider, req.params.videoId, req.headers.range);
 
     if (!upstream.ok || !upstream.body) {
-      req.log.warn({ status: upstream.status, videoId: req.params.videoId }, "media upstream failed");
+      req.log.warn({ status: upstream.status, videoId: req.params.videoId, provider }, "media upstream failed");
       return reply.code(upstream.status === 404 ? 404 : 502).send({ error: "media_unavailable" });
     }
 
@@ -320,6 +358,10 @@ app.get<{ Params: { videoId: string } }>(
 app.setErrorHandler((error: FastifyError, req, reply) => {
   if (error instanceof Reauth) {
     reply.code(401).send({ error: "reauth" });
+    return;
+  }
+  if (error instanceof OneDriveReauth) {
+    reply.code(403).send({ error: "onedrive_reauth" });
     return;
   }
   if (error instanceof MissingScope) {
@@ -346,4 +388,7 @@ if (existsSync(webDist)) {
 await app.listen({ port: env.port, host: env.host });
 if (!oauthReady && !env.mock) {
   app.log.warn("GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET are missing: login is disabled. Set MOCK=1 to preview the UI.");
+}
+if (!oneDriveReady && !env.mock) {
+  app.log.warn("MICROSOFT_CLIENT_ID/MICROSOFT_CLIENT_SECRET are missing: OneDrive cannot be connected.");
 }

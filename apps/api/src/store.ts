@@ -3,6 +3,12 @@ import { join } from "node:path";
 import type { ProgressMap } from "@myplayer/shared";
 import { env } from "./env.js";
 
+export interface CloudTokens {
+  accessToken: string;
+  expiresAt: number;
+  refreshToken?: string;
+}
+
 export interface User {
   email: string;
   name: string;
@@ -10,6 +16,8 @@ export interface User {
   accessToken: string;
   expiresAt: number;
   refreshToken?: string;
+  /** OneDrive link; absent until the account connects it. */
+  onedrive?: CloudTokens;
 }
 
 export interface Session {

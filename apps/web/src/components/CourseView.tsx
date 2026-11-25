@@ -1,4 +1,4 @@
-import type { Attachment, Course, Module, ProgressInput, ProgressMap, Video } from "@myplayer/shared";
+import type { Attachment, CloudProvider, Course, Module, ProgressInput, ProgressMap, Video } from "@myplayer/shared";
 import {
   ArrowRight,
   ArrowUpRight,
@@ -17,6 +17,8 @@ import { clock, clockMs, percentOf, span } from "../lib/format";
 import { moduleStats, nextVideo } from "../lib/stats";
 import { StatusIcon } from "./Sidebar";
 import { Button, buttonClass, cn } from "./ui";
+
+const cloudName = (provider?: CloudProvider) => (provider === "onedrive" ? "OneDrive" : "Drive");
 
 interface CourseViewProps {
   course?: Course;
@@ -97,8 +99,8 @@ export function CourseView({ course, module, video, progress, onOpenVideo, onSav
               href={video.webViewLink}
               target="_blank"
               rel="noreferrer"
-              title="Abrir no Drive"
-              aria-label="Abrir no Drive"
+              title={`Abrir no ${cloudName(video.provider)}`}
+              aria-label={`Abrir no ${cloudName(video.provider)}`}
               className={buttonClass("ghost", "icon")}
             >
               <ExternalLink size={15} strokeWidth={1.5} />
@@ -272,7 +274,7 @@ function VideoPlayer({
         playsInline
         preload="metadata"
         aria-label={`Aula: ${video.name}`}
-        src={`/api/media/${video.id}`}
+        src={`/api/media/${encodeURIComponent(video.id)}?provider=${video.provider ?? "gdrive"}`}
         onLoadedMetadata={(event) => {
           const element = event.currentTarget;
           if (startAt > 5 && startAt < element.duration - 10) element.currentTime = startAt;
@@ -295,7 +297,7 @@ function VideoPlayer({
           <div>
             <p className="text-[14px] text-ink-2">Não foi possível abrir este vídeo aqui</p>
             <p className="mx-auto mt-1.5 max-w-[46ch] text-[12.5px] leading-5 text-ink-3">
-              O formato pode não ser suportado pelo navegador, ou o download está bloqueado no Drive.
+              O formato pode não ser suportado pelo navegador, ou o download está bloqueado na nuvem.
             </p>
             <div className="mt-4 flex items-center justify-center gap-2">
               <Button
@@ -310,7 +312,7 @@ function VideoPlayer({
               </Button>
               {video.webViewLink ? (
                 <a href={video.webViewLink} target="_blank" rel="noreferrer" className={buttonClass("ghost", "sm")}>
-                  Abrir no Drive
+                  Abrir no {cloudName(video.provider)}
                   <ArrowUpRight size={14} strokeWidth={1.5} />
                 </a>
               ) : null}

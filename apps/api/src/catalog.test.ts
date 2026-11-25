@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { mergeProgress } from "@myplayer/shared";
-import { buildCatalog, type DriveFile } from "./catalog.js";
+import type { CloudProvider } from "@myplayer/shared";
+import { buildCatalog, FOLDER, parseRef, type CloudFile } from "./catalog.js";
 
 test("progress marks watched only near the end", () => {
   const partial = mergeProgress(undefined, { position: 300, duration: 600 }, 1);
@@ -28,20 +29,29 @@ test("progress ignores bad numbers and never exceeds duration", () => {
   assert.equal(kept.duration, 600);
 });
 
-const folder = (id: string, name: string, parents: string[]): DriveFile => ({
+const folder = (id: string, name: string, parents: string[], provider: CloudProvider = "gdrive"): CloudFile => ({
+  provider,
   id,
   name,
-  mimeType: "application/vnd.google-apps.folder",
+  mimeType: FOLDER,
   parents,
 });
-const video = (id: string, name: string, parents: string[]): DriveFile => ({
+const video = (id: string, name: string, parents: string[], provider: CloudProvider = "gdrive"): CloudFile => ({
+  provider,
   id,
   name,
   mimeType: "video/mp4",
   parents,
-  videoMediaMetadata: { durationMillis: "600000" },
+  durationMs: 600_000,
 });
-const file = (id: string, name: string, mimeType: string, parents: string[]): DriveFile => ({
+const file = (
+  id: string,
+  name: string,
+  mimeType: string,
+  parents: string[],
+  provider: CloudProvider = "gdrive",
+): CloudFile => ({
+  provider,
   id,
   name,
   mimeType,
@@ -51,8 +61,8 @@ const file = (id: string, name: string, mimeType: string, parents: string[]): Dr
 test("only the selected folders become courses, in selection order", () => {
   const catalog = buildCatalog(
     [
-      { id: "c2", name: "Curso B" },
-      { id: "c1", name: "Curso A" },
+      { provider: "gdrive", id: "c2", name: "Curso B" },
+      { provider: "gdrive", id: "c1", name: "Curso A" },
     ],
     [folder("c1", "Curso A", ["somewhere"]), folder("c2", "Curso B", ["somewhere"])],
   );
@@ -64,11 +74,45 @@ test("only the selected folders become courses, in selection order", () => {
   assert.deepEqual(catalog.courses[0]!.modules, []);
 });
 
+test("courses from both clouds keep selection order and carry their provider", () => {
+  const catalog = buildCatalog(
+    [
+      { provider: "onedrive", id: "o1", name: "Curso One" },
+      { provider: "gdrive", id: "g1", name: "Curso Google" },
+    ],
+    [
+      folder("o1", "Curso One", ["od"], "onedrive"),
+      folder("om", "Módulo One", ["o1"], "onedrive"),
+      video("ov", "Aula One.mp4", ["om"], "onedrive"),
+      folder("g1", "Curso Google", ["gd"]),
+      video("gv", "Aula Google.mp4", ["g1"]),
+    ],
+  );
+
+  assert.deepEqual(
+    catalog.courses.map((course) => [course.id, course.provider]),
+    [
+      ["onedrive:o1", "onedrive"],
+      ["gdrive:g1", "gdrive"],
+    ],
+  );
+  assert.equal(catalog.courses[0]!.modules[0]!.videos[0]!.provider, "onedrive");
+  assert.equal(catalog.courses[1]!.modules[0]!.videos[0]!.provider, "gdrive");
+});
+
+test("legacy ids without a provider belong to Google Drive", () => {
+  assert.deepEqual(parseRef("1AbC-xyz_123"), { provider: "gdrive", id: "1AbC-xyz_123" });
+  assert.deepEqual(parseRef("onedrive:F4C71C6B4B0A1E33!123"), {
+    provider: "onedrive",
+    id: "F4C71C6B4B0A1E33!123",
+  });
+});
+
 test("catalog maps course > module > videos and attachments", () => {
   const catalog = buildCatalog(
     [
-      { id: "c1", name: "Curso A" },
-      { id: "c2", name: "Curso B" },
+      { provider: "gdrive", id: "c1", name: "Curso A" },
+      { provider: "gdrive", id: "c2", name: "Curso B" },
     ],
     [
       folder("m1", "Módulo 1", ["c1"]),
@@ -98,7 +142,7 @@ test("catalog maps course > module > videos and attachments", () => {
 
 test("files loose in the course folder become a module instead of disappearing", () => {
   const catalog = buildCatalog(
-    [{ id: "c1", name: "Curso A" }],
+    [{ provider: "gdrive", id: "c1", name: "Curso A" }],
     [
       video("v1", "Aula solta.mp4", ["c1"]),
       file("a1", "Programa.pdf", "application/pdf", ["c1"]),
