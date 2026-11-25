@@ -1,0 +1,14 @@
+.git
+.gitnexus
+.claude
+node_modules
+**/node_modules
+**/dist
+**/.turbo
+**/release
+apps/desktop
+data
+.env
+.env.*
+*.log
+.DS_Store

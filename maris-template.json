@@ -1,0 +1,85 @@
+{
+  "id": "",
+  "name": "MyPlayer",
+  "description": "Player de cursos do Google Drive/OneDrive: Fastify + React em um único processo, build pelo Dockerfile da raiz. Histórico e sessões em /data. No deploy, adicione um domínio HTTP com HTTPS (APP_URL/API_URL saem de https://{port-8788}) e cadastre https://<host>/auth/google/callback e https://<host>/auth/microsoft/callback no Google Cloud e no Microsoft Entra.",
+  "category": "application",
+  "image": "",
+  "command": [],
+  "args": [],
+  "files": {},
+  "env": {
+    "NODE_ENV": "production",
+    "HOST": "0.0.0.0",
+    "PORT": "8788",
+    "DATA_DIR": "/data",
+    "APP_URL": "https://{port-8788}",
+    "API_URL": "https://{port-8788}"
+  },
+  "ports": [
+    {
+      "name": "port-8788",
+      "port": 8788,
+      "public": true,
+      "protocol": "tcp",
+      "primary": true
+    }
+  ],
+  "volumes": [
+    {
+      "name": "data",
+      "mount_path": "/data",
+      "size": "1Gi"
+    }
+  ],
+  "inputs": [
+    {
+      "name": "GOOGLE_CLIENT_ID",
+      "label": "Google OAuth client ID (Web application)",
+      "type": "fixed",
+      "required": true
+    },
+    {
+      "name": "GOOGLE_CLIENT_SECRET",
+      "label": "Google OAuth client secret",
+      "type": "fixed",
+      "required": true,
+      "secret": true
+    },
+    {
+      "name": "MICROSOFT_CLIENT_ID",
+      "label": "Microsoft Entra application (client) ID (opcional; OneDrive)",
+      "type": "fixed",
+      "required": false
+    },
+    {
+      "name": "MICROSOFT_CLIENT_SECRET",
+      "label": "Microsoft Entra client secret (opcional; OneDrive)",
+      "type": "fixed",
+      "required": false,
+      "secret": true
+    }
+  ],
+  "resources": {
+    "cpu_request": "100m",
+    "cpu_limit": "500m",
+    "memory_request": "128Mi",
+    "memory_limit": "512Mi"
+  },
+  "health_check": {
+    "path": "/api/health",
+    "port": 8788,
+    "type": "http",
+    "initial_delay_seconds": 5,
+    "period_seconds": 10,
+    "timeout_seconds": 3,
+    "failure_threshold": 3
+  },
+  "source": {
+    "git_repo": "https://github.com/wernerjr/MyPlayer.git",
+    "git_branch": "main",
+    "git_provider_id": "",
+    "build_type": "dockerfile",
+    "dockerfile": "Dockerfile",
+    "build_context": "."
+  }
+}

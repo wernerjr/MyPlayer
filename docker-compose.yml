@@ -1,0 +1,21 @@
+services:
+  myplayer:
+    build: .
+    image: myplayer:latest
+    restart: unless-stopped
+    ports:
+      - "8788:8788"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8788
+      DATA_DIR: /data
+      # URL pública do app, sem barra no final. Sem ela, o OAuth volta para http://localhost:8788.
+      APP_URL: ${PUBLIC_URL:-http://localhost:8788}
+      API_URL: ${PUBLIC_URL:-http://localhost:8788}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID:-}
+      MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET:-}
+      MOCK: ${MOCK:-0}
+    volumes:
+      - ./data:/data

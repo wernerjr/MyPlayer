@@ -71,6 +71,20 @@ APP_URL=https://seu-dominio API_URL=https://seu-dominio DATA_DIR=/caminho/dos/da
 O servidor da API também serve o build da web, então um único processo e uma única origem cuidam de cookie e
 OAuth. Cadastre as URIs de redirecionamento correspondentes no Google Cloud e no Microsoft Entra.
 
+### Docker (homelab)
+
+```bash
+cp .env.example .env   # preencha as credenciais e PUBLIC_URL
+docker compose up -d --build
+```
+
+`PUBLIC_URL` é a URL que o navegador usa para chegar no app, sem barra no final (ex.:
+`http://192.168.1.10:8788` ou `https://player.exemplo.com`). É dela que saem as URIs de callback
+`.../auth/google/callback` e `.../auth/microsoft/callback`; sem ela o login redireciona para
+`http://localhost:8788`. O container escuta em `0.0.0.0:8788` e serve web e API na mesma origem. Atrás de
+proxy reverso, aponte para a porta `8788` e mantenha `PUBLIC_URL` com `https`. Histórico e sessões ficam em
+`./data`.
+
 ## Estrutura da pasta
 
 Na primeira vez, a biblioteca abre vazia. Clique em **Escolher pastas**, escolha a nuvem (Drive ou OneDrive),
