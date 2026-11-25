@@ -3,4 +3,5 @@ dist
 .turbo
 .env
 data
+release
 .DS_Store
