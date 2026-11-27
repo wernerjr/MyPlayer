@@ -3,7 +3,18 @@ import { existsSync } from "node:fs";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import fastifyStatic from "@fastify/static";
-import { mergeProgress, type CloudProvider, type Me, type ProgressInput } from "@myplayer/shared";
+import {
+  addFavorite,
+  cloudKey,
+  FAVORITES_MAX,
+  mergeProgress,
+  removeFavorite,
+  type CloudProvider,
+  type FavoriteInput,
+  type FavoritesResponse,
+  type Me,
+  type ProgressInput,
+} from "@myplayer/shared";
 import Fastify, { type FastifyError, type FastifyReply, type FastifyRequest } from "fastify";
 import { MissingScope, refKey } from "./catalog.js";
 import { getCatalog, invalidateCatalog, listFolders, openMedia, resolveFolders } from "./cloud.js";
@@ -31,8 +42,29 @@ const MS_STATE_COOKIE = "mp_ms_state";
 const SESSION_SECONDS = 30 * 86_400;
 const PROVIDERS: CloudProvider[] = ["gdrive", "onedrive"];
 const VIDEO_ID_PATTERN = "^[A-Za-z0-9_!.~-]{6,400}$";
+const FOLDER_ID_PATTERN = "^(?:(?:gdrive|onedrive):)?[A-Za-z0-9_!.~-]{1,400}$";
 const FILE_ID = { type: "object", properties: { videoId: { type: "string", pattern: VIDEO_ID_PATTERN } }, required: ["videoId"] } as const;
-const SELECTION = { type: "object", properties: { folderIds: { type: "array", maxItems: 100, items: { type: "string", pattern: "^(?:(?:gdrive|onedrive):)?[A-Za-z0-9_!.~-]{1,400}$" } } }, required: ["folderIds"], additionalProperties: false } as const;
+const SELECTION = { type: "object", properties: { folderIds: { type: "array", maxItems: 100, items: { type: "string", pattern: FOLDER_ID_PATTERN } } }, required: ["folderIds"], additionalProperties: false } as const;
+const FAVORITE_PARAMS = {
+  type: "object",
+  properties: {
+    provider: { type: "string", enum: PROVIDERS },
+    videoId: { type: "string", pattern: VIDEO_ID_PATTERN },
+  },
+  required: ["provider", "videoId"],
+} as const;
+const FAVORITE_BODY = {
+  type: "object",
+  properties: {
+    courseId: { type: "string", pattern: FOLDER_ID_PATTERN },
+    courseName: { type: "string", minLength: 1, maxLength: 300 },
+    moduleId: { type: "string", pattern: FOLDER_ID_PATTERN },
+    moduleName: { type: "string", minLength: 1, maxLength: 300 },
+    videoName: { type: "string", minLength: 1, maxLength: 300 },
+  },
+  required: ["courseId", "courseName", "moduleId", "moduleName", "videoName"],
+  additionalProperties: false,
+} as const;
 
 const app = Fastify({ logger: { level: "info" }, trustProxy: true });
 
@@ -321,6 +353,68 @@ app.post<{ Body: { videoIds: string[]; watched: boolean } }>(
     for (const id of req.body.videoIds) rows[id] = mergeProgress(rows[id], { watched: req.body.watched });
     save();
     return rows;
+  },
+);
+
+// --- favorites ------------------------------------------------------------
+
+app.get("/api/favorites", async (req, reply) => {
+  const user = await currentUser(req, reply);
+  if (!user) return;
+  const response: FavoritesResponse = { favorites: db.favorites[user.email] ?? [], limit: FAVORITES_MAX };
+  return response;
+});
+
+app.put<{ Params: { provider: CloudProvider; videoId: string }; Body: FavoriteInput }>(
+  "/api/favorites/:provider/:videoId",
+  { schema: { params: FAVORITE_PARAMS, body: FAVORITE_BODY } },
+  async (req, reply) => {
+    const user = await currentUser(req, reply);
+    if (!user) return;
+
+    // The body carries only display data; the identity comes from the path.
+    const courseName = req.body.courseName.trim();
+    const moduleName = req.body.moduleName.trim();
+    const videoName = req.body.videoName.trim();
+    if (!courseName || !moduleName || !videoName) return reply.code(400).send({ error: "bad_favorite" });
+
+    // Limit check and insert stay in one synchronous block; no await in between.
+    const rows = db.favorites[user.email] ?? [];
+    const result = addFavorite(rows, {
+      videoId: req.params.videoId,
+      provider: req.params.provider,
+      courseId: req.body.courseId,
+      courseName,
+      moduleId: req.body.moduleId,
+      moduleName,
+      videoName,
+    });
+    if (result.limited) return reply.code(409).send({ error: "favorites_limit" });
+
+    if (result.added) {
+      db.favorites[user.email] = result.favorites;
+      save();
+    }
+    const response: FavoritesResponse = { favorites: result.favorites, limit: FAVORITES_MAX };
+    return response;
+  },
+);
+
+app.delete<{ Params: { provider: CloudProvider; videoId: string } }>(
+  "/api/favorites/:provider/:videoId",
+  { schema: { params: FAVORITE_PARAMS } },
+  async (req, reply) => {
+    const user = await currentUser(req, reply);
+    if (!user) return;
+
+    const rows = db.favorites[user.email] ?? [];
+    const next = removeFavorite(rows, cloudKey(req.params.provider, req.params.videoId));
+    if (next !== rows) {
+      db.favorites[user.email] = next;
+      save();
+    }
+    const response: FavoritesResponse = { favorites: next, limit: FAVORITES_MAX };
+    return response;
   },
 );
 

@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ProgressMap } from "@myplayer/shared";
+import type { Favorite, ProgressMap } from "@myplayer/shared";
 import { env } from "./env.js";
 
 export interface CloudTokens {
@@ -31,6 +31,8 @@ export interface Db {
   progress: Record<string, ProgressMap>;
   /** Folder ids the account marked as courses, in the order they were chosen. */
   courses: Record<string, string[]>;
+  /** Favorite lessons per account, newest first. */
+  favorites: Record<string, Favorite[]>;
 }
 
 const file = join(env.dataDir, "db.json");
@@ -43,11 +45,12 @@ function load(): Db {
       sessions: parsed.sessions ?? {},
       progress: parsed.progress ?? {},
       courses: parsed.courses ?? {},
+      favorites: parsed.favorites ?? {},
     };
   } catch (error) {
     // A corrupt database must not be silently replaced: that would lose watch history.
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    return { users: {}, sessions: {}, progress: {}, courses: {} };
+    return { users: {}, sessions: {}, progress: {}, courses: {}, favorites: {} };
   }
 }
 

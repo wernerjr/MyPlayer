@@ -1,8 +1,30 @@
-import { mergeProgress, type Catalog, type CloudProvider, type Module, type ProgressInput, type ProgressMap } from "@myplayer/shared";
-import { ChevronLeft, ExternalLink, Menu } from "lucide-react";
+import {
+  addFavorite,
+  applyFavoritesResponse,
+  FAVORITES_MAX,
+  mergeProgress,
+  removeFavorite,
+  restoreFavorite,
+  type Catalog,
+  type CloudProvider,
+  type Favorite,
+  type FavoriteInput,
+  type FavoritesResponse,
+  type Module,
+  type ProgressInput,
+  type ProgressMap,
+} from "@myplayer/shared";
+import { ChevronLeft, ExternalLink, Menu, X } from "lucide-react";
 import type { Course, Me, Video } from "@myplayer/shared";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, HttpError } from "../lib/api";
+import {
+  favoriteKey,
+  FAVORITES_ERROR_MESSAGE,
+  FAVORITES_LIMIT_MESSAGE,
+  resolveFavorite,
+  toFavorite,
+} from "../lib/favorites";
 import { courseStats, pickVideo } from "../lib/stats";
 import { CoursePicker } from "./CoursePicker";
 import { CourseView } from "./CourseView";
@@ -10,9 +32,16 @@ import { Library } from "./Library";
 import { Sidebar } from "./Sidebar";
 import { Button, buttonClass, Spinner } from "./ui";
 
+type LibraryView = "courses" | "favorites";
+
 export function AppShell({ me }: { me: Me }) {
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [progress, setProgress] = useState<ProgressMap>({});
+  const [favorites, setFavorites] = useState<Favorite[]>([]);
+  /** Sequence of the newest favorites mutation sent; older responses are ignored. */
+  const favoritesSequence = useRef(0);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [libraryView, setLibraryView] = useState<LibraryView>("courses");
   const [error, setError] = useState<null | "scope" | "drive" | "onedrive" | "onedrive_connect">(null);
   const [loading, setLoading] = useState(true);
   const [courseId, setCourseId] = useState<string | null>(null);
@@ -44,7 +73,14 @@ export function AppShell({ me }: { me: Me }) {
       .catch((cause) => {
         if (cause instanceof HttpError && cause.status === 401) location.assign("/auth/google");
       });
+    api<FavoritesResponse>("/api/favorites")
+      .then((response) => setFavorites(response.favorites))
+      .catch((cause) => {
+        if (cause instanceof HttpError && cause.status === 401) location.assign("/auth/google");
+      });
   }, [loadCatalog]);
+
+  const favoriteKeys = useMemo(() => new Set(favorites.map((favorite) => favorite.key)), [favorites]);
 
   useEffect(() => {
     // Coming back from the OneDrive consent, reopen the picker or explain the failure.
@@ -94,6 +130,73 @@ export function AppShell({ me }: { me: Me }) {
     }).catch(() => {});
   }, []);
 
+  /** Removes one favorite, restoring only that key by recency when the API fails. */
+  const removeFavoriteByKey = useCallback((favorite: Favorite) => {
+    const key = favorite.key;
+    const sequence = ++favoritesSequence.current;
+    setNotice(null);
+    setFavorites((current) => removeFavorite(current, key));
+    void api<FavoritesResponse>(
+      `/api/favorites/${favorite.provider}/${encodeURIComponent(favorite.videoId)}`,
+      { method: "DELETE" },
+    )
+      .then((response) =>
+        setFavorites((current) =>
+          applyFavoritesResponse(current, { sequence, favorites: response.favorites }, favoritesSequence.current),
+        ),
+      )
+      .catch(() => {
+        setFavorites((current) => restoreFavorite(current, favorite));
+        setNotice(FAVORITES_ERROR_MESSAGE);
+      });
+  }, []);
+
+  const toggleFavorite = useCallback(
+    (targetCourse: Course, targetModule: Module, targetVideo: Video) => {
+      const candidate = toFavorite(targetCourse, targetModule, targetVideo);
+      const key = favoriteKey(candidate.provider, candidate.videoId);
+      const existing = favorites.find((item) => item.key === key);
+      if (existing) {
+        removeFavoriteByKey(existing);
+        return;
+      }
+      // The server is the authority; this pre-check only avoids a pointless call.
+      if (favorites.length >= FAVORITES_MAX) {
+        setNotice(FAVORITES_LIMIT_MESSAGE);
+        return;
+      }
+
+      const sequence = ++favoritesSequence.current;
+      setNotice(null);
+      setFavorites((current) => addFavorite(current, candidate, Date.now()).favorites);
+      const input: FavoriteInput = {
+        courseId: candidate.courseId,
+        courseName: candidate.courseName,
+        moduleId: candidate.moduleId,
+        moduleName: candidate.moduleName,
+        videoName: candidate.videoName,
+      };
+      void api<FavoritesResponse>(
+        `/api/favorites/${candidate.provider}/${encodeURIComponent(candidate.videoId)}`,
+        { method: "PUT", body: JSON.stringify(input) },
+      )
+        .then((response) =>
+          setFavorites((current) =>
+            applyFavoritesResponse(current, { sequence, favorites: response.favorites }, favoritesSequence.current),
+          ),
+        )
+        .catch((cause) => {
+          setFavorites((current) => removeFavorite(current, key));
+          setNotice(
+            cause instanceof HttpError && cause.status === 409
+              ? FAVORITES_LIMIT_MESSAGE
+              : FAVORITES_ERROR_MESSAGE,
+          );
+        });
+    },
+    [favorites, removeFavoriteByKey],
+  );
+
   const course = catalog?.courses.find((item) => item.id === courseId);
   const module = course?.modules.find((item) => item.videos.some((video) => video.id === videoId));
   const video = module?.videos.find((item) => item.id === videoId);
@@ -130,7 +233,15 @@ export function AppShell({ me }: { me: Me }) {
     setMobileOpen(false);
   }
 
-  function openLibrary() {
+  function openFavorite(favorite: Favorite) {
+    if (!catalog) return;
+    const target = resolveFavorite(catalog, favorite);
+    if (!target) return;
+    openCourse(target.course, target.video.id);
+  }
+
+  function openLibrary(view: LibraryView = "courses") {
+    setLibraryView(view);
     setCourseId(null);
     setVideoId(null);
     setOpenModules([]);
@@ -151,10 +262,13 @@ export function AppShell({ me }: { me: Me }) {
       progress={progress}
       activeVideoId={videoId}
       openModules={openModules}
+      libraryView={libraryView}
+      favoriteKeys={favoriteKeys}
       onToggleModule={toggleModule}
       onOpenVideo={openVideo}
       onOpenCourse={openCourseById}
       onOpenLibrary={openLibrary}
+      onToggleFavorite={toggleFavorite}
       onClose={onClose}
     />
   );
@@ -194,7 +308,7 @@ export function AppShell({ me }: { me: Me }) {
           <nav aria-label="Trilha" className="flex min-w-0 items-center gap-2 text-[13px]">
             {course ? (
               <button
-                onClick={openLibrary}
+                onClick={() => openLibrary()}
                 className="-ml-1.5 flex shrink-0 items-center gap-1 rounded-[6px] px-1.5 py-1 text-ink-3 transition-colors duration-150 hover:bg-raised hover:text-ink"
               >
                 <ChevronLeft size={14} strokeWidth={1.5} />
@@ -231,6 +345,28 @@ export function AppShell({ me }: { me: Me }) {
             ) : null}
           </div>
         </header>
+
+        <div
+          role="status"
+          aria-live="polite"
+          className={
+            notice
+              ? "flex items-center gap-3 border-b border-line bg-raised px-4 py-2 text-[12.5px] text-ink-2 lg:px-8"
+              : "sr-only"
+          }
+        >
+          {notice}
+          {notice ? (
+            <button
+              type="button"
+              onClick={() => setNotice(null)}
+              aria-label="Fechar aviso"
+              className="ml-auto grid size-6 shrink-0 place-items-center rounded-[6px] text-ink-3 transition-colors duration-150 hover:bg-white/[0.06] hover:text-ink"
+            >
+              <X size={13} strokeWidth={1.5} />
+            </button>
+          ) : null}
+        </div>
 
         <div className="flex-1 overflow-y-auto">
           {error ? (
@@ -300,16 +436,22 @@ export function AppShell({ me }: { me: Me }) {
               module={module}
               video={video}
               progress={progress}
+              favoriteKeys={favoriteKeys}
               onOpenVideo={openVideo}
               onSave={save}
               onSetModuleWatched={setModuleWatched}
+              onToggleFavorite={toggleFavorite}
             />
           ) : (
             <Library
               catalog={catalog}
               progress={progress}
               loading={loading}
+              view={libraryView}
+              favorites={favorites}
               onOpenCourse={openCourse}
+              onOpenFavorite={openFavorite}
+              onRemoveFavorite={removeFavoriteByKey}
               onSelectCourses={() => setPickerOpen(true)}
               onRefresh={() => loadCatalog(true)}
             />
