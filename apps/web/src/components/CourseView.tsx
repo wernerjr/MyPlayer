@@ -11,8 +11,10 @@ import {
   FileSpreadsheet,
   FileText,
   Paperclip,
+  Star,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { favoriteKey } from "../lib/favorites";
 import { clock, clockMs, percentOf, span } from "../lib/format";
 import { moduleStats, nextVideo } from "../lib/stats";
 import { StatusIcon } from "./Sidebar";
@@ -25,12 +27,24 @@ interface CourseViewProps {
   module?: Module;
   video?: Video;
   progress: ProgressMap;
+  favoriteKeys: Set<string>;
   onOpenVideo: (video: Video) => void;
   onSave: (videoId: string, input: ProgressInput) => void;
   onSetModuleWatched: (mod: Module, watched: boolean) => void;
+  onToggleFavorite: (course: Course, mod: Module, video: Video) => void;
 }
 
-export function CourseView({ course, module, video, progress, onOpenVideo, onSave, onSetModuleWatched }: CourseViewProps) {
+export function CourseView({
+  course,
+  module,
+  video,
+  progress,
+  favoriteKeys,
+  onOpenVideo,
+  onSave,
+  onSetModuleWatched,
+  onToggleFavorite,
+}: CourseViewProps) {
   if (!course || !module || !video) {
     return (
       <div className="grid min-h-full place-items-center px-6 py-20">
@@ -48,6 +62,9 @@ export function CourseView({ course, module, video, progress, onOpenVideo, onSav
   const next = nextVideo(course, video.id);
   const resumable = !row?.watched && (row?.position ?? 0) > 10;
   const moduleIndex = course.modules.indexOf(module) + 1;
+  const favorited = favoriteKeys.has(
+    favoriteKey(video.provider ?? course.provider ?? "gdrive", video.id),
+  );
 
   return (
     <div className="mx-auto w-full max-w-[1180px] px-5 py-6 lg:px-8 lg:py-7">
@@ -79,6 +96,16 @@ export function CourseView({ course, module, video, progress, onOpenVideo, onSav
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
+          <Button
+            variant="secondary"
+            aria-pressed={favorited}
+            aria-label={favorited ? `Remover ${video.name} dos favoritos` : `Favoritar ${video.name}`}
+            title={favorited ? "Remover dos favoritos" : "Favoritar aula"}
+            onClick={() => onToggleFavorite(course, module, video)}
+          >
+            <Star size={15} strokeWidth={1.5} className={cn(favorited && "fill-current text-amber")} />
+            {favorited ? "Favorita" : "Favoritar"}
+          </Button>
           <Button
             variant="secondary"
             aria-pressed={Boolean(row?.watched)}

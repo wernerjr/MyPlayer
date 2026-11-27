@@ -8,8 +8,10 @@ import {
   FolderTree,
   LogOut,
   Paperclip,
+  Star,
   X,
 } from "lucide-react";
+import { favoriteKey } from "../lib/favorites";
 import { clockMs, initials } from "../lib/format";
 import { moduleStats } from "../lib/stats";
 import { cn } from "./ui";
@@ -22,10 +24,13 @@ interface SidebarProps {
   progress: ProgressMap;
   activeVideoId?: string | null;
   openModules: string[];
+  libraryView: "courses" | "favorites";
+  favoriteKeys: Set<string>;
   onToggleModule: (id: string) => void;
   onOpenVideo: (video: Video) => void;
   onOpenCourse: (courseId: string) => void;
-  onOpenLibrary: () => void;
+  onOpenLibrary: (view?: "courses" | "favorites") => void;
+  onToggleFavorite: (course: Course, mod: Module, video: Video) => void;
   onClose?: () => void;
 }
 
@@ -36,16 +41,19 @@ export function Sidebar({
   progress,
   activeVideoId,
   openModules,
+  libraryView,
+  favoriteKeys,
   onToggleModule,
   onOpenVideo,
   onOpenCourse,
   onOpenLibrary,
+  onToggleFavorite,
   onClose,
 }: SidebarProps) {
   return (
     <aside className="flex h-full w-[280px] shrink-0 flex-col border-r border-line bg-deep">
       <div className="flex h-16 shrink-0 items-center justify-between gap-2 px-5">
-        <button onClick={onOpenLibrary} className="text-[17px] font-semibold tracking-[-0.01em] text-ink">
+        <button onClick={() => onOpenLibrary()} className="text-[17px] font-semibold tracking-[-0.01em] text-ink">
           MyPlayer
         </button>
         {onClose ? (
@@ -60,21 +68,39 @@ export function Sidebar({
         ) : null}
       </div>
 
-      <div className="px-3">
+      <div className="space-y-0.5 px-3">
         <button
-          onClick={onOpenLibrary}
-          aria-current={course ? undefined : "page"}
+          onClick={() => onOpenLibrary("courses")}
+          aria-current={!course && libraryView === "courses" ? "page" : undefined}
           className={cn(
             "flex h-9 w-full items-center gap-3 rounded-[8px] px-2 text-left text-[13px] transition-colors duration-150",
-            course ? "text-ink-2 hover:bg-raised hover:text-ink" : "bg-raised text-ink",
+            !course && libraryView === "courses" ? "bg-raised text-ink" : "text-ink-2 hover:bg-raised hover:text-ink",
           )}
         >
           <FolderTree
             size={16}
             strokeWidth={1.5}
-            className={cn("shrink-0", course ? "text-ink-3" : "text-ink-2")}
+            className={cn("shrink-0", !course && libraryView === "courses" ? "text-ink-2" : "text-ink-3")}
           />
           Cursos
+        </button>
+        <button
+          onClick={() => onOpenLibrary("favorites")}
+          aria-current={!course && libraryView === "favorites" ? "page" : undefined}
+          className={cn(
+            "flex h-9 w-full items-center gap-3 rounded-[8px] px-2 text-left text-[13px] transition-colors duration-150",
+            !course && libraryView === "favorites" ? "bg-raised text-ink" : "text-ink-2 hover:bg-raised hover:text-ink",
+          )}
+        >
+          <Star
+            size={16}
+            strokeWidth={1.5}
+            className={cn(
+              "shrink-0",
+              !course && libraryView === "favorites" ? "fill-current text-amber" : "text-ink-3",
+            )}
+          />
+          Favoritas
         </button>
       </div>
 
@@ -92,13 +118,16 @@ export function Sidebar({
             {course.modules.map((mod, index) => (
               <ModuleGroup
                 key={mod.id}
+                course={course}
                 mod={mod}
                 index={index}
                 open={openModules.includes(mod.id)}
                 progress={progress}
                 activeVideoId={activeVideoId}
+                favoriteKeys={favoriteKeys}
                 onToggle={() => onToggleModule(mod.id)}
                 onOpenVideo={onOpenVideo}
+                onToggleFavorite={onToggleFavorite}
               />
             ))}
           </>
@@ -157,16 +186,30 @@ export function Sidebar({
 }
 
 interface ModuleGroupProps {
+  course: Course;
   mod: Module;
   index: number;
   open: boolean;
   progress: ProgressMap;
   activeVideoId?: string | null;
+  favoriteKeys: Set<string>;
   onToggle: () => void;
   onOpenVideo: (video: Video) => void;
+  onToggleFavorite: (course: Course, mod: Module, video: Video) => void;
 }
 
-function ModuleGroup({ mod, index, open, progress, activeVideoId, onToggle, onOpenVideo }: ModuleGroupProps) {
+function ModuleGroup({
+  course,
+  mod,
+  index,
+  open,
+  progress,
+  activeVideoId,
+  favoriteKeys,
+  onToggle,
+  onOpenVideo,
+  onToggleFavorite,
+}: ModuleGroupProps) {
   const stats = moduleStats(mod, progress);
 
   return (
@@ -200,7 +243,9 @@ function ModuleGroup({ mod, index, open, progress, activeVideoId, onToggle, onOp
               video={video}
               active={video.id === activeVideoId}
               progress={progress[video.id]}
+              favorited={favoriteKeys.has(favoriteKey(video.provider ?? course.provider ?? "gdrive", video.id))}
               onClick={() => onOpenVideo(video)}
+              onToggleFavorite={() => onToggleFavorite(course, mod, video)}
             />
           ))}
           {mod.attachments.map((attachment) => (
@@ -233,34 +278,55 @@ function VideoRow({
   video,
   active,
   progress,
+  favorited,
   onClick,
+  onToggleFavorite,
 }: {
   video: Video;
   active: boolean;
   progress?: ProgressMap[string];
+  favorited: boolean;
   onClick: () => void;
+  onToggleFavorite: () => void;
 }) {
   return (
-    <button
-      onClick={onClick}
-      aria-current={active ? "true" : undefined}
+    <div
       className={cn(
-        "group relative flex w-full items-center gap-3 py-2 pr-5 pl-5 text-left transition-colors duration-150",
+        "group relative flex w-full items-center transition-colors duration-150",
         active ? "bg-raised" : "hover:bg-white/[0.03]",
       )}
     >
       {active ? <span className="absolute inset-y-1 left-0 w-0.5 rounded-r-full bg-amber" /> : null}
-      <StatusIcon watched={progress?.watched} started={(progress?.position ?? 0) > 5} />
-      <span
+      <button
+        onClick={onClick}
+        aria-current={active ? "true" : undefined}
+        className="flex min-w-0 flex-1 items-center gap-3 py-2 pr-2 pl-5 text-left"
+      >
+        <StatusIcon watched={progress?.watched} started={(progress?.position ?? 0) > 5} />
+        <span
+          className={cn(
+            "min-w-0 flex-1 truncate text-[13px] leading-5",
+            active ? "text-ink" : progress?.watched ? "text-ink-3 group-hover:text-ink-2" : "text-ink-2 group-hover:text-ink",
+          )}
+        >
+          {video.name}
+        </span>
+        <span className="shrink-0 font-mono text-[11px] tabular-nums text-ink-3">{clockMs(video.durationMs)}</span>
+      </button>
+      <button
+        type="button"
+        onClick={onToggleFavorite}
+        aria-pressed={favorited}
+        aria-label={favorited ? `Remover ${video.name} dos favoritos` : `Favoritar ${video.name}`}
+        title={favorited ? "Remover dos favoritos" : "Favoritar aula"}
         className={cn(
-          "min-w-0 flex-1 truncate text-[13px] leading-5",
-          active ? "text-ink" : progress?.watched ? "text-ink-3 group-hover:text-ink-2" : "text-ink-2 group-hover:text-ink",
+          "mr-2 grid size-7 shrink-0 place-items-center rounded-[6px] transition-colors duration-150 hover:bg-white/[0.06]",
+          favorited ? "text-amber hover:text-amber" : "text-ink-3 hover:text-ink",
         )}
       >
-        {video.name}
-      </span>
-      <span className="shrink-0 font-mono text-[11px] tabular-nums text-ink-3">{clockMs(video.durationMs)}</span>
-    </button>
+        <Star size={14} strokeWidth={1.5} className={cn(favorited && "fill-current")} />
+      </button>
+    </div>
   );
 }
 
